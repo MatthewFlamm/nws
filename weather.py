@@ -131,7 +131,7 @@ async def async_setup_platform(hass, config, async_add_entities,
         return
 
     from pynws import Nws
-    # TODO: pass unit system
+
     websession = async_get_clientsession(hass)
     nws = Nws(websession, latlon=(float(latitude), float(longitude)), userid=api_key)
 
@@ -139,6 +139,7 @@ async def async_setup_platform(hass, config, async_add_entities,
     if station == '':
         with async_timeout.timeout(10, loop=hass.loop):
             stations = await nws.stations()
+        _LOGGER.info("Station list: %s", stations)
         nws.station = stations[0]
         _LOGGER.debug("Initialized for coordinates %s, %s -> station %s",
                       latitude, longitude, stations[0])
