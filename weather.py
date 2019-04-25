@@ -174,12 +174,12 @@ class NWSWeather(WeatherEntity):
                           self._nws.station)
             self._observation = await self._nws.observations()
             _LOGGER.debug("Updating forecast")
-            if self._mode = 'daynight':
+            if self._mode == 'daynight':
                 self._forecast = await self._nws.forecast()
             elif self._mode == 'hourly':
                 self._forecast = await self._nws.forecast_hourly()
             else:
-                _LOGGER.error("Invalid Forecast Mode')
+                _LOGGER.error("Invalid Forecast Mode")
         _LOGGER.debug("Observations: %s", self._observation)
         _LOGGER.debug("Forecasts: %s", self._forecast)
         
