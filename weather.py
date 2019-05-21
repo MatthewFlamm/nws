@@ -22,8 +22,6 @@ from homeassistant.util.distance import convert as convert_distance
 from homeassistant.util.pressure import convert as convert_pressure
 from homeassistant.util.temperature import convert as convert_temperature
 
-REQUIREMENTS = ['pynws==0.6']
-
 _LOGGER = logging.getLogger(__name__)
 
 ATTRIBUTION = 'Data from National Weather Service/NOAA'
@@ -127,7 +125,7 @@ async def async_setup_platform(hass, config, async_add_entities,
                                discovery_info=None):
     """Set up the NWS weather platform."""
     from pynws import Nws
-
+    from metar import Metar
     latitude = config.get(CONF_LATITUDE, hass.config.latitude)
     longitude = config.get(CONF_LONGITUDE, hass.config.longitude)
     station = config.get(CONF_STATION)
@@ -155,16 +153,21 @@ async def async_setup_platform(hass, config, async_add_entities,
         nws.station = station
         _LOGGER.debug("Initialized station %s", station[0])
 
-    async_add_entities([NWSWeather(nws, hass.config.units, config)], True)
+    async_add_entities(
+        [NWSWeather(nws, Metar.Metar, hass.config.units, config)],
+        True)
 
 
 class NWSWeather(WeatherEntity):
     """Representation of a weather condition."""
 
-    def __init__(self, nws, units, config):
+    def __init__(self, nws, metar, units, config):
         """Initialise the platform with a data instance and station name."""
         self._nws = nws
+        self._metar = metar
         self._station_name = config.get(CONF_NAME, self._nws.station)
+
+        self._metar_obs = None
         self._observation = None
         self._forecast = None
         self._description = None
@@ -177,7 +180,14 @@ class NWSWeather(WeatherEntity):
         with async_timeout.timeout(10, loop=self.hass.loop):
             _LOGGER.debug("Updating station observations %s",
                           self._nws.station)
-            self._observation = await self._nws.observations()
+
+            obs = await self._nws.observations(limit=1)
+            self._observation = obs[0]
+            if 'rawMessage' in self._observation.keys():
+                self._metar_obs = self._metar(self._observation['rawMessage'])
+            else:
+                self._metar_obs = None
+
             _LOGGER.debug("Updating forecast")
             if self._mode == 'daynight':
                 self._forecast = await self._nws.forecast()
@@ -199,7 +209,9 @@ class NWSWeather(WeatherEntity):
     @property
     def temperature(self):
         """Return the current temperature."""
-        temp_c = self._observation[0]['temperature']['value']
+        temp_c = self._observation['temperature']['value']
+        if temp_c is None and self._metar_obs:
+            temp_c = self._metar_obs.temp.value(units='C')
         if temp_c is not None:
             return convert_temperature(temp_c, TEMP_CELSIUS, TEMP_FAHRENHEIT)
         return None
@@ -207,10 +219,14 @@ class NWSWeather(WeatherEntity):
     @property
     def pressure(self):
         """Return the current pressure."""
-        pressure_pa = self._observation[0]['seaLevelPressure']['value']
-        # convert Pa to in Hg
-        if pressure_pa is None:
-            return None
+        pressure_pa = self._observation['seaLevelPressure']['value']
+
+        if pressure_pa is None and self._metar_obs:
+            pressure_hpa = self._metar_obs.press.value(units='HPA')
+            if pressure_hpa is None:
+                return None
+            pressure_pa = convert_pressure(pressure_hpa, PRESSURE_HPA,
+                                           PRESSURE_PA)
 
         if self._is_metric:
             pressure = convert_pressure(pressure_pa, PRESSURE_PA, PRESSURE_HPA)
@@ -224,12 +240,15 @@ class NWSWeather(WeatherEntity):
     @property
     def humidity(self):
         """Return the name of the sensor."""
-        return self._observation[0]['relativeHumidity']['value']
+        return self._observation['relativeHumidity']['value']
 
     @property
     def wind_speed(self):
         """Return the current windspeed."""
-        wind_m_s = self._observation[0]['windSpeed']['value']
+        wind_m_s = self._observation['windSpeed']['value']
+        if wind_m_s is None and self._metar_obs:
+            wind_m_s = self._metar_obs.wind_speed.value(units='MPS')
+            print(wind_m_s)
         if wind_m_s is None:
             return None
         wind_m_hr = wind_m_s * 3600
@@ -244,7 +263,10 @@ class NWSWeather(WeatherEntity):
     @property
     def wind_bearing(self):
         """Return the current wind bearing (degrees)."""
-        return self._observation[0]['windDirection']['value']
+        wind_bearing = self._observation['windDirection']['value']
+        if wind_bearing is None and self._metar_obs:
+            wind_bearing = self._metar_obs.wind_dir.value()
+        return wind_bearing
 
     @property
     def temperature_unit(self):
@@ -254,14 +276,16 @@ class NWSWeather(WeatherEntity):
     @property
     def condition(self):
         """Return current condition."""
-        time, weather = parse_icon(self._observation[0]['icon'])
+        time, weather = parse_icon(self._observation['icon'])
         cond, _ = convert_condition(time, weather)
         return cond
 
     @property
     def visibility(self):
         """Return visibility."""
-        vis_m = self._observation[0]['visibility']['value']
+        vis_m = self._observation['visibility']['value']
+        if vis_m is None and self._metar_obs:
+            vis_m = self._metar_obs.vis.value(units='M')
         if vis_m is None:
             return None
 
